@@ -325,6 +325,7 @@ function load(i){
   L.build();
   players=[mkPlayer(0,L.spawn[0]),mkPlayer(1,L.spawn[1])];epoch++;
   if(mode==='guest'){const b=players[0].b;b.type=CANNON.Body.KINEMATIC;b.mass=0;b.updateMassProperties();}
+  if(mode==='host'){const b=players[1].b;b.type=CANNON.Body.KINEMATIC;b.mass=0;b.updateMassProperties();}
   updCam(0,true);
   $('#lvn').textContent=L.name;sel.value=String(i);
 }
@@ -345,7 +346,7 @@ function readKeys(maps,pi){const k=c=>maps.some(mi=>KM[mi][c].some(x=>keys.has(x
 /* ---------- 物理 ---------- */
 const rr=new CANNON.RaycastResult(),tv=new CANNON.Vec3();
 function cast(ax,ay,az,bx,by,bz,mask){rr.reset();world.raycastClosest(new CANNON.Vec3(ax,ay,az),new CANNON.Vec3(bx,by,bz),{collisionFilterMask:mask,skipBackfaces:true},rr);return rr.hasHit?rr:null;}
-function attach(p,r){const b=r.body;if(b.grip===false)return false;const h=r.hitPointWorld,local=new CANNON.Vec3();b.pointToLocalFrame(h,local);const q=p.b.position;
+function attach(p,r){const b=r.body;if(b.grip===false||(b===p.gb&&!b.player))return false;const h=r.hitPointWorld,local=new CANNON.Vec3();b.pointToLocalFrame(h,local);const q=p.b.position;
   p.grab={b,local,off:new THREE.Vector3(h.x-q.x,h.y-q.y,h.z-q.z),isP:!!b.player};puff(h.x,h.y,h.z,0xffffff,5);return true;}
 function tryGrab(p){const q=p.b.position,f=p.face,mask=ALL&~G_P[p.id];
   for(const[h,len]of[[0.95,0.9],[0.5,0.9],[0.05,0.85],[-0.3,0.8]]){const r=cast(q.x,q.y+h,q.z,q.x+f.x*len,q.y+h,q.z+f.z*len,mask);if(r&&attach(p,r))return;}
@@ -353,7 +354,8 @@ function tryGrab(p){const q=p.b.position,f=p.face,mask=ALL&~G_P[p.id];
 function moveTo(v,t,s){const dx=t[0]-v.x,dy=t[1]-v.y,dz=t[2]-v.z,d=Math.hypot(dx,dy,dz);if(d<=s){v.set(t[0],t[1],t[2]);return;}v.x+=dx/d*s;v.y+=dy/d*s;v.z+=dz/d*s;}
 function control(p,inp,dt){const b=p.b,v=b.velocity,mag=Math.hypot(inp.x,inp.z);p.gw=inp.grab&&!p.tired;
   if(mag>0.2&&!p.grab)p.face.set(inp.x,0,inp.z).normalize();
-  let gx=0,gz=0;if(p.gnd&&p.gb){gx=p.gb.velocity.x;gz=p.gb.velocity.z;}
+  if(p.grab&&p.gnd&&p.gb===p.grab.b&&!p.grab.isP&&p.grab.b.mass>0)p.grab=null;
+  let gx=0,gz=0;if(p.gnd&&p.gb){gx=p.gb.velocity.x;gz=p.gb.velocity.z;if(p.gb.mass>0){const gl=Math.hypot(gx,gz);const lim=p.gb.player?2.5:1;if(gl>lim){gx*=lim/gl;gz*=lim/gl;}}}
   let ax=(inp.x*RUN+gx-v.x)*(p.gnd?14:3),az=(inp.z*RUN+gz-v.z)*(p.gnd?14:3);if(!p.gnd&&mag<0.1)ax=az=0;
   const am=p.gnd?26:(p.grab?9:8),al=Math.hypot(ax,az);if(al>am){ax*=am/al;az*=am/al;}v.x+=ax*dt;v.z+=az*dt;
   p.coy=p.gnd?0.1:p.coy-dt;
@@ -365,7 +367,7 @@ function control(p,inp,dt){const b=p.b,v=b.velocity,mag=Math.hypot(inp.x,inp.z);
       const t=g.isP?[ux*0.75,0.6,uz*0.75]:g.b.mass>0?[ux*0.8,1.3,uz*0.8]:[ux*0.5,-0.42,uz*0.5];moveTo(g.off,t,1.9*dt);pulling=g.b.mass===0||g.isP;}
     const aw=g.b.pointToWorldFrame(g.local,tv),q=b.position,dx=aw.x-(q.x+g.off.x),dy=aw.y-(q.y+g.off.y),dz=aw.z-(q.z+g.off.z),dl=Math.hypot(dx,dy,dz);
     if(dl>1.5){p.grab=null;}else{const ov=g.b.velocity;let fx=dx*K+(ov.x-v.x)*C,fy=dy*K+(ov.y-v.y)*C,fz=dz*K+(ov.z-v.z)*C;
-      const fm=g.b.mass>0?(g.isP?55:32):75,fl=Math.hypot(fx,fy,fz);if(fl>fm){fx*=fm/fl;fy*=fm/fl;fz*=fm/fl;}
+      const fm=g.isP?55:g.b.mass>0?32:75,fl=Math.hypot(fx,fy,fz);if(fl>fm){fx*=fm/fl;fy*=fm/fl;fz*=fm/fl;}
       const sh=g.isP&&p.gnd&&!g.b.player.gnd?0.2:1;v.x+=fx*dt*sh;v.y+=fy*dt*sh;v.z+=fz*dt*sh;
       if(g.b.mass>0){if(g.isP){g.b.velocity.x-=fx*dt;g.b.velocity.y-=fy*dt;g.b.velocity.z-=fz*dt;}
         else{const im=1/g.b.mass;g.b.velocity.x-=fx*dt*im;g.b.velocity.y-=fy*dt*im;g.b.velocity.z-=fz*dt*im;g.b.angularVelocity.scale(0.9,g.b.angularVelocity);}}}}
@@ -394,8 +396,8 @@ function substep(dt){time+=dt;if(mode!=='guest')signals();
       for(const e of weighted){const q=e.b.position,r=e.k==='p'?0.4:0.45;if(Math.abs(q.x-bp.x)<k.hw+r&&Math.abs(q.z-bp.z)<k.hd+r&&q.y<bp.y+k.hh+r&&q.y>bp.y-k.hh-r){if(e.k==='p'){if(auth(e.b.player))respawn(e.b.player);}else hold=true;}}
       if(hold){b.velocity.set(0,0,0);continue;}}
     b.velocity.set(clamp((t[0]-b.position.x)/dt,-s,s),clamp((t[1]-b.position.y)/dt,-s,s),clamp((t[2]-b.position.z)/dt,-s,s));}
-  players.forEach((p,i)=>{if(mode==='guest'&&i===0){driveRemote(p,dt);return;}control(p,readInput(i),dt);});
-  if(mode==='guest'){partnerPull(dt);correctObjs(dt);}
+  players.forEach((p,i)=>{if((mode==='guest'&&i===0)||(mode==='host'&&i===1)){driveRemote(p,dt);return;}control(p,readInput(i),dt);});
+  if(mode==='guest'){partnerPull(dt);correctObjs(dt);}else if(mode==='host')hostPull(dt);
   for(const o of objs){if(!o.gnd)continue;const v=o.b.velocity,g=o.gnd.velocity,rx=v.x-g.x,rz=v.z-g.z,sp=Math.hypot(rx,rz),dv=(o.fr||3)*dt;
     if(sp<=dv){v.x=g.x;v.z=g.z;}else{v.x-=rx/sp*dv;v.z-=rz/sp*dv;}if(o.b.angularVelocity)o.b.angularVelocity.scale(1-3*dt,o.b.angularVelocity);}
   world.step(dt);
@@ -420,7 +422,7 @@ function drawChar(p,t,dt){const v=p.vis,q=p.b.position,vel=p.b.velocity;v.rig.po
   p.ph+=sp*dt*3.2;const mv=p.gnd?Math.min(1,sp/RUN):0;v.feet.forEach((f,k)=>{f.position.z=Math.sin(p.ph+k*Math.PI)*0.13*mv;f.position.y=-0.42+Math.max(0,Math.cos(p.ph+k*Math.PI))*0.06*mv;});
   v.eyes.forEach((e,k)=>{e.scale.y=p.tired?0.25:1;});
   const fx=Math.sin(v.yaw),fz=Math.cos(v.yaw),rx=Math.cos(v.yaw),rz=-Math.sin(v.yaw);
-  let aw=null;if(mode==='guest'&&p.id===0){aw=p.ga||null;}else if(p.grab){const a=p.grab.b.pointToWorldFrame(p.grab.local,tv);aw=[a.x,a.y,a.z];}
+  let aw=null;if((mode==='guest'&&p.id===0)||(mode==='host'&&p.id===1)){aw=p.ga||null;}else if(p.grab){const a=p.grab.b.pointToWorldFrame(p.grab.local,tv);aw=[a.x,a.y,a.z];}
   for(let k=0;k<2;k++){const s=k?1:-1,sx=q.x+rx*s*0.32,sy=q.y+0.08,sz=q.z+rz*s*0.32;
     if(aw)t1.set(aw[0]+rx*s*0.1,aw[1],aw[2]+rz*s*0.1);
     else if(p.gw)t1.set(q.x+fx*0.75+rx*s*0.18,q.y+0.55,q.z+fz*0.75+rz*s*0.18);
@@ -513,7 +515,7 @@ function applySnap(s){if(!s||typeof s!=='object')return;const L0=Math.floor(num(
   if(s.S&&typeof s.S==='object'){for(const k in s.S){const v=s.S[k];if(/^[a-z0-9_]{1,12}$/i.test(k)&&(typeof v==='boolean'||typeof v==='number'))S[k]=v;}}
   for(const pl of plates)pl.on=!!S[pl.id];
   const a=Array.isArray(s.p)?s.p[0]:null,p1=players[0];
-  if(Array.isArray(a)){p1.tg=[num(a[0]),num(a[1]),num(a[2])];p1.tv=[num(a[5]),num(a[6]),num(a[7])];p1.face.set(num(a[3]),0,num(a[4]));if(p1.face.lengthSq()<0.01)p1.face.set(0,0,-1);p1.face.normalize();
+  if(Array.isArray(a)){p1.tgAt=performance.now();p1.tg=[num(a[0]),num(a[1]),num(a[2])];p1.tv=[num(a[5]),num(a[6]),num(a[7])];p1.face.set(num(a[3]),0,num(a[4]));if(p1.face.lengthSq()<0.01)p1.face.set(0,0,-1);p1.face.normalize();
     p1.gnd=!!a[8];p1.st=clamp(num(a[9]),0,100);p1.tired=!!a[10];p1.gw=!!a[11];p1.ga=Array.isArray(a[12])?a[12].map(num):null;}
   remotePull=Array.isArray(s.pg)?s.pg.map(num):null;
   if(Array.isArray(s.o))s.o.forEach((a,i)=>{const o=objs[i];if(!o||!Array.isArray(a))return;o.tg=[num(a[0]),num(a[1]),num(a[2])];o.tv=[num(a[7]),num(a[8]),num(a[9])];o.b.quaternion.set(num(a[3]),num(a[4]),num(a[5]),num(a[6])||1);});
@@ -524,37 +526,51 @@ function applySnap(s){if(!s||typeof s!=='object')return;const L0=Math.floor(num(
   if(exitZ)exitZ.on=!!s.ex;
   if(s.st==='clear'&&!guestOv){guestOv=true;showOv('脱出成功',`${L.name}　${fmt(time)}<br>お嬢様（ホスト）が次の間へ進めるのをお待ちくださいませ。`,null);}
   else if(s.st==='play'&&guestOv){guestOv=false;ov.hidden=true;}}
-function driveRemote(p,dt){const b=p.b,t=p.tg;if(!t)return;const v=p.tv||[0,0,0],lead=0.06;
-  const tx=t[0]+v[0]*lead,ty=t[1]+v[1]*lead,tz=t[2]+v[2]*lead,d=Math.hypot(tx-b.position.x,ty-b.position.y,tz-b.position.z);
+function driveRemote(p,dt){const b=p.b,t=p.tg;if(!t)return;const v=p.tv||[0,0,0],el=Math.min(0.3,(performance.now()-(p.tgAt||0))/1000+0.05);
+  const tx=t[0]+v[0]*el,ty=t[1]+v[1]*el,tz=t[2]+v[2]*el,d=Math.hypot(tx-b.position.x,ty-b.position.y,tz-b.position.z);
   if(d>2.5){b.position.set(tx,ty,tz);b.velocity.set(0,0,0);return;}
-  b.velocity.set(clamp((tx-b.position.x)*10,-12,12),clamp((ty-b.position.y)*10,-12,12),clamp((tz-b.position.z)*10,-12,12));}
+  b.velocity.set(clamp(v[0]+(tx-b.position.x)*14,-14,14),clamp(v[1]+(ty-b.position.y)*14,-16,16),clamp(v[2]+(tz-b.position.z)*14,-14,14));}
+let guestPull=null;
+function hostPull(dt){const g=guestPull,p1=players[0],p2=players[1];if(!g||!p1||!p2)return;
+  const aw=p1.b.pointToWorldFrame(new CANNON.Vec3(g[0],g[1],g[2]),tv),q=p2.b.position,dx=aw.x-(q.x+g[3]),dy=aw.y-(q.y+g[4]),dz=aw.z-(q.z+g[5]);
+  if(Math.hypot(dx,dy,dz)>1.5)return;const v=p1.b.velocity,ov=p2.b.velocity;let fx=dx*K+(v.x-ov.x)*C,fy=dy*K+(v.y-ov.y)*C,fz=dz*K+(v.z-ov.z)*C;
+  const fl=Math.hypot(fx,fy,fz);if(fl>55){fx*=55/fl;fy*=55/fl;fz*=55/fl;}v.x-=fx*dt;v.y-=fy*dt;v.z-=fz*dt;}
 function partnerPull(dt){const p1=players[0],p2=players[1],g=remotePull;if(!g||!p1||!p2)return;
   const aw=p2.b.pointToWorldFrame(new CANNON.Vec3(g[0],g[1],g[2]),tv),q=p1.b.position,dx=aw.x-(q.x+g[3]),dy=aw.y-(q.y+g[4]),dz=aw.z-(q.z+g[5]);
   if(Math.hypot(dx,dy,dz)>1.5)return;const v=p2.b.velocity,ov=p1.b.velocity;let fx=dx*K+(v.x-ov.x)*C,fy=dy*K+(v.y-ov.y)*C,fz=dz*K+(v.z-ov.z)*C;
   const fl=Math.hypot(fx,fy,fz);if(fl>55){fx*=55/fl;fy*=55/fl;fz*=55/fl;}v.x-=fx*dt;v.y-=fy*dt;v.z-=fz*dt;}
-function correctObjs(dt){const p2=players[1];for(const o of objs){if(!o.tg)continue;if(p2&&p2.grab&&p2.grab.b===o.b)continue;
+function correctObjs(dt){const p2=players[1];for(const o of objs){if(!o.tg)continue;if((p2&&p2.grab&&p2.grab.b===o.b)||o.own>performance.now())continue;
   const q=o.b.position,t=o.tg,d=Math.hypot(t[0]-q.x,t[1]-q.y,t[2]-q.z);if(d>1.5){q.set(t[0],t[1],t[2]);o.b.velocity.set(...o.tv);continue;}
   const k=Math.min(1,dt*6);q.x+=(t[0]-q.x)*k;q.y+=(t[1]-q.y)*k;q.z+=(t[2]-q.z)*k;const v=o.b.velocity;v.x+=(o.tv[0]-v.x)*k;v.y+=(o.tv[1]-v.y)*k;v.z+=(o.tv[2]-v.z)*k;}}
 const findPeer=role=>nr?nr.peers().find(p=>!p.isMe&&p.presence&&p.presence.role===role):null;
-let lastGuestN=-1,gseq=0;
+let lastGuestN=-1,gseq=0,lastSnapKey='',ownI=-1;
 function netTick(now,dt){if(!nr)return;
   if(mode==='host'){const g=findPeer('guest'),pr=g&&g.presence;const a=pr&&Array.isArray(pr.in)?pr.in:null;
     netIn=a?{x:clamp(num(a[0]),-1,1),z:clamp(num(a[1]),-1,1),jump:!!a[2],grab:!!a[3]}:null;
     const s2=pr&&Array.isArray(pr.s2)?pr.s2:null,p2=players[1];
-    if(s2&&p2&&pr.n!==lastGuestN&&pr.e===epoch&&pr.L===lvIdx){lastGuestN=pr.n;const b=p2.b,x=num(s2[0]),y=num(s2[1]),z=num(s2[2]),d=Math.hypot(x-b.position.x,y-b.position.y,z-b.position.z);
-      if(d>1.2)b.position.set(x,y,z);else{b.position.x+=(x-b.position.x)*0.6;b.position.y+=(y-b.position.y)*0.6;b.position.z+=(z-b.position.z)*0.6;}
-      b.velocity.set(num(s2[3]),num(s2[4]),num(s2[5]));p2.face.set(num(s2[6]),0,num(s2[7]));if(p2.face.lengthSq()<0.01)p2.face.set(0,0,-1);p2.face.normalize();
-      p2.st=clamp(num(s2[8]),0,100);p2.tired=!!s2[9];}
+    if(s2&&p2&&pr.n!==lastGuestN&&pr.e===epoch&&pr.L===lvIdx){lastGuestN=pr.n;
+      p2.tgAt=now;p2.tg=[num(s2[0]),num(s2[1]),num(s2[2])];p2.tv=[num(s2[3]),num(s2[4]),num(s2[5])];
+      p2.face.set(num(s2[6]),0,num(s2[7]));if(p2.face.lengthSq()<0.01)p2.face.set(0,0,-1);p2.face.normalize();
+      p2.st=clamp(num(s2[8]),0,100);p2.tired=!!s2[9];p2.gw=!!s2[10];p2.ga=Array.isArray(s2[11])?s2[11].map(num):null;
+      guestPull=Array.isArray(s2[12])?s2[12].map(num):null;p2.gnd=!!s2[13];
+      const go=Array.isArray(pr.go)?pr.go:null;if(go){const o=objs[Math.floor(num(go[0]))];if(o){const b=o.b,x=num(go[1]),y=num(go[2]),z=num(go[3]),d=Math.hypot(x-b.position.x,y-b.position.y,z-b.position.z);
+        if(d>1.5)b.position.set(x,y,z);else{b.position.x+=(x-b.position.x)*0.7;b.position.y+=(y-b.position.y)*0.7;b.position.z+=(z-b.position.z)*0.7;}
+        b.quaternion.set(num(go[4]),num(go[5]),num(go[6]),num(go[7])||1);b.velocity.set(num(go[8]),num(go[9]),num(go[10]));}}}
     setNet(`部屋コード ${netCode}　・　相方：${g?'接続中':'未接続'}　・　操作：WASD・Space・F`);
-    if(now-lastSend>50){lastSend=now;nr.presence({role:'host',s:snapshot()}).catch(()=>{});}}
+    if(now-lastSend>33){lastSend=now;nr.presence({role:'host',s:snapshot()}).catch(()=>{});}}
   else if(mode==='guest'){const h=findPeer('host');
-    if(h&&h.presence.s){hostSeen=now;applySnap(h.presence.s);}
+    if(h&&h.presence.s){hostSeen=now;const hs=h.presence.s,key=hs.e+':'+hs.L+':'+hs.st+':'+hs.t;if(key!==lastSnapKey){lastSnapKey=key;applySnap(hs);}}
     const lost=hostSeen?now-hostSeen>4000:now-joinedAt>8000;
     setNet(`部屋コード ${netCode}　・　${hostSeen&&!lost?'お嬢様（ホスト）と接続中':'ホストを探しています…'}　・　操作：WASD・Space・F`);
     if(lost&&!guestOv){guestOv=true;showOv(hostSeen?'接続が切れました':'部屋が見つかりません',hostSeen?'ホストとの接続が途切れました。ページを再読み込みして、もう一度部屋に入ってくださいませ。':'部屋コードをご確認のうえ、再読み込みしてもう一度お試しくださいませ。',null);}
-    if(now-lastSend>50&&players[1]){lastSend=now;const i=readKeys([0,1],0),p2=players[1],q=p2.b.position,v=p2.b.velocity;gseq=(gseq+1)%100000;
-      nr.presence({role:'guest',n:gseq,L:lvIdx,e:hostEpoch,in:[r3(i.x),r3(i.z),i.jump?1:0,i.grab?1:0],
-        s2:[r3(q.x),r3(q.y),r3(q.z),r3(v.x),r3(v.y),r3(v.z),r3(p2.face.x),r3(p2.face.z),Math.round(p2.st),p2.tired?1:0]}).catch(()=>{});}}}
+    const p2=players[1];
+    if(p2&&p2.grab&&!p2.grab.isP){const oi=objs.findIndex(o=>o.b===p2.grab.b);if(oi>=0){objs[oi].own=now+1500;ownI=oi;}}
+    if(now-lastSend>33&&p2){lastSend=now;const q=p2.b.position,v=p2.b.velocity;gseq=(gseq+1)%100000;
+      let anc=null,pgl=null;if(p2.grab){const w=p2.grab.b.pointToWorldFrame(p2.grab.local,tv);anc=[r3(w.x),r3(w.y),r3(w.z)];
+        if(p2.grab.isP){const l=p2.grab.local,o=p2.grab.off;pgl=[r3(l.x),r3(l.y),r3(l.z),r3(o.x),r3(o.y),r3(o.z)];}}
+      let go=null;if(ownI>=0&&objs[ownI]&&objs[ownI].own>now){const o=objs[ownI],oq=o.b.position,r=o.b.quaternion,ov=o.b.velocity;go=[ownI,r3(oq.x),r3(oq.y),r3(oq.z),r3(r.x),r3(r.y),r3(r.z),r3(r.w),r3(ov.x),r3(ov.y),r3(ov.z)];}
+      nr.presence({role:'guest',n:gseq,L:lvIdx,e:hostEpoch,go,
+        s2:[r3(q.x),r3(q.y),r3(q.z),r3(v.x),r3(v.y),r3(v.z),r3(p2.face.x),r3(p2.face.z),Math.round(p2.st),p2.tired?1:0,p2.gw?1:0,anc,pgl,p2.gnd?1:0]}).catch(()=>{});}}}
 const CODE_CH='abcdefghjkmnpqrstuvwxyz23456789';
 async function goHost(){const m=$('#netmsg');m.textContent='部屋を用意しております…';
   netCode=Array.from({length:5},()=>CODE_CH[Math.floor(Math.random()*CODE_CH.length)]).join('');
