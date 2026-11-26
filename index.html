@@ -88,7 +88,8 @@ kbd{display:inline-block;min-width:1.7em;text-align:center;padding:0 5px;border:
       <li><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> 移動</li>
       <li><kbd>/</kbd> または テンキー<kbd>0</kbd> ジャンプ</li>
       <li><kbd>.</kbd> または <kbd>右Shift</kbd> 押している間つかむ</li>
-      <li>ゲームパッド：左スティック・Aでジャンプ・RB/RTでつかむ</li></ul></div>
+      <li>ゲームパッド：左スティック・Aでジャンプ・RB/RTでつかむ</li>
+      <li>オンラインでは2Pも <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・<kbd>Space</kbd>・<kbd>F</kbd></li></ul></div>
     <div class="pc"><h3>仕掛けの心得</h3><ul>
       <li>大理石と金属は掴めません。石・木・箱・相方は掴めます。</li>
       <li>ぶら下がるとスタミナが減り、地面で休むと戻ります。</li>
@@ -146,7 +147,7 @@ function textSprite(text,h=0.38,color='#fff6e4'){const c=document.createElement(
   const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthWrite:false}));s.scale.set(h*c.width/c.height,h,1);return s;}
 
 /* ---------- ステージ ---------- */
-let world,root=new THREE.Group(),L,lvIdx=0,time=0,state='title',totalTime=0,S={},camD=10;
+let epoch=0,world,root=new THREE.Group(),L,lvIdx=0,time=0,state='title',totalTime=0,S={},camD=10;
 let players=[],objs=[],kins=[],plates=[],buttons=[],sockets=[],lasers=[],orbs=[],zones=[],barriers=[],parts=[],weighted=[],exitZ=null,pans=null;
 let matW,matP,matO;scene.add(root);
 function tiled(w,h,d,kind){const g=new THREE.BoxGeometry(w,h,d);if(kind==='crate'||kind==='metal')return g;const uv=g.attributes.uv,dims=[[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];
@@ -322,7 +323,8 @@ function load(i){
   const cm=(a,b,f,r=0)=>world.addContactMaterial(new CANNON.ContactMaterial(a,b,{friction:f,restitution:r}));
   cm(matP,matW,0);cm(matP,matO,0.05);cm(matP,matP,0.5);cm(matO,matW,0,0);cm(matO,matO,0);
   L.build();
-  players=[mkPlayer(0,L.spawn[0]),mkPlayer(1,L.spawn[1])];
+  players=[mkPlayer(0,L.spawn[0]),mkPlayer(1,L.spawn[1])];epoch++;
+  if(mode==='guest'){const b=players[0].b;b.type=CANNON.Body.KINEMATIC;b.mass=0;b.updateMassProperties();}
   updCam(0,true);
   $('#lvn').textContent=L.name;sel.value=String(i);
 }
@@ -334,7 +336,7 @@ const KM=[{l:['KeyA'],r:['KeyD'],u:['KeyW'],d:['KeyS'],j:['Space','KeyG'],g:['Sh
 function pollPads(){let gp=[];try{gp=navigator.getGamepads?[...navigator.getGamepads()].filter(Boolean):[];}catch(e){}
   const b=(g,i)=>!!(g.buttons[i]&&g.buttons[i].pressed);
   for(let i=0;i<2;i++){const g=gp[i];pads[i]=g?{x:g.axes[0]||0,z:g.axes[1]||0,j:b(g,0),g:b(g,5)||b(g,7)||b(g,4)||b(g,6)||b(g,2)}:null;}}
-function readInput(i){if(mode==='host')return i===0?readKeys([0,1],0):(netIn||{x:0,z:0,jump:false,grab:false});return readKeys([i],i);}
+function readInput(i){if(mode==='guest')return readKeys([0,1],0);if(mode==='host')return i===0?readKeys([0,1],0):(netIn||{x:0,z:0,jump:false,grab:false});return readKeys([i],i);}
 function readKeys(maps,pi){const k=c=>maps.some(mi=>KM[mi][c].some(x=>keys.has(x)));
   let x=(k('r')?1:0)-(k('l')?1:0),z=(k('d')?1:0)-(k('u')?1:0),j=k('j'),g=k('g');const p=pads[pi];
   if(p){if(Math.hypot(p.x,p.z)>0.25){x=p.x;z=p.z;}j=j||p.j;g=g||p.g;}
@@ -385,13 +387,15 @@ function panLabels(){for(const k of['la','lb']){if(pans[k]){root.remove(pans[k])
   const fmtW=w=>'重さ '+(Math.round(w*10)/10);pans.la=textSprite(fmtW(pans.wa),0.34,'#ffe3a0');pans.lb=textSprite(fmtW(pans.wb),0.34,'#ffe3a0');root.add(pans.la,pans.lb);}
 function respawn(p){players.forEach(o=>{if(o.grab&&(o===p||o.grab.b===p.b))o.grab=null;});const q=p.b.position;puff(q.x,q.y,q.z,COL[p.id].b,16);
   p.b.position.copy(p.rs);p.b.velocity.set(0,0,0);p.st=100;p.tired=false;}
-function substep(dt){time+=dt;signals();
+function substep(dt){time+=dt;if(mode!=='guest')signals();
+  const auth=p=>mode==='host'?p.id===0:mode==='guest'?p.id===1:true;
   for(const k of kins){const t=k.target(),b=k.b,s=k.speed;
     if(k.door&&t[1]>b.position.y+0.01){let hold=false;const bp=b.position;
-      for(const e of weighted){const q=e.b.position,r=e.k==='p'?0.4:0.45;if(Math.abs(q.x-bp.x)<k.hw+r&&Math.abs(q.z-bp.z)<k.hd+r&&q.y<bp.y+k.hh+r&&q.y>bp.y-k.hh-r){if(e.k==='p')respawn(e.b.player);else hold=true;}}
+      for(const e of weighted){const q=e.b.position,r=e.k==='p'?0.4:0.45;if(Math.abs(q.x-bp.x)<k.hw+r&&Math.abs(q.z-bp.z)<k.hd+r&&q.y<bp.y+k.hh+r&&q.y>bp.y-k.hh-r){if(e.k==='p'){if(auth(e.b.player))respawn(e.b.player);}else hold=true;}}
       if(hold){b.velocity.set(0,0,0);continue;}}
     b.velocity.set(clamp((t[0]-b.position.x)/dt,-s,s),clamp((t[1]-b.position.y)/dt,-s,s),clamp((t[2]-b.position.z)/dt,-s,s));}
-  players.forEach((p,i)=>control(p,readInput(i),dt));
+  players.forEach((p,i)=>{if(mode==='guest'&&i===0){driveRemote(p,dt);return;}control(p,readInput(i),dt);});
+  if(mode==='guest'){partnerPull(dt);correctObjs(dt);}
   for(const o of objs){if(!o.gnd)continue;const v=o.b.velocity,g=o.gnd.velocity,rx=v.x-g.x,rz=v.z-g.z,sp=Math.hypot(rx,rz),dv=(o.fr||3)*dt;
     if(sp<=dv){v.x=g.x;v.z=g.z;}else{v.x-=rx/sp*dv;v.z-=rz/sp*dv;}if(o.b.angularVelocity)o.b.angularVelocity.scale(1-3*dt,o.b.angularVelocity);}
   world.step(dt);
@@ -400,10 +404,10 @@ function substep(dt){time+=dt;signals();
   for(const p of players){p.gnd=false;p.gb=null;}
   for(const c of world.contacts)for(const p of players){let ny,o;if(c.bi===p.b){ny=-c.ni.y;o=c.bj;}else if(c.bj===p.b){ny=c.ni.y;o=c.bi;}else continue;if(ny>0.5){p.gnd=true;p.gb=o;}}
   for(const p of players)if(!p.gnd){const q=p.b.position,r=cast(q.x,q.y,q.z,q.x,q.y-0.56,q.z,ALL&~G_P[p.id]&~G_B[p.id]);if(r&&p.b.velocity.y<1.5){p.gnd=true;p.gb=r.body;}}
-  for(const l of lasers){const r=cast(l.o.x,l.o.y,l.o.z,l.o.x+l.d.x*l.len,l.o.y+l.d.y*l.len,l.o.z+l.d.z*l.len,G_W|G_P[0]|G_P[1]|G_O);l.cur=r?r.distance:l.len;if(r&&r.body.player)respawn(r.body.player);}
-  for(const p of players){const q=p.b.position;if(q.y<-8){respawn(p);continue;}for(const z of zones)if(z.test(q))p.rs.set(...z.sp[p.id]);}
-  for(const o of objs)if(o.b.position.y<-8){players.forEach(p=>{if(p.grab&&p.grab.b===o.b)p.grab=null;});o.b.position.set(...o.home);o.b.velocity.set(0,0,0);o.b.angularVelocity.set(0,0,0);o.b.quaternion.set(0,0,0,1);}
-  if(exitZ&&exitZ.on&&players.every(p=>{const q=p.b.position;return Math.abs(q.x-exitZ.x)<exitZ.w/2&&Math.abs(q.z-exitZ.z)<exitZ.d/2&&q.y>exitZ.y&&q.y<exitZ.y+2;}))win();}
+  for(const l of lasers){const r=cast(l.o.x,l.o.y,l.o.z,l.o.x+l.d.x*l.len,l.o.y+l.d.y*l.len,l.o.z+l.d.z*l.len,G_W|G_P[0]|G_P[1]|G_O);l.cur=r?r.distance:l.len;if(r&&r.body.player&&auth(r.body.player))respawn(r.body.player);}
+  for(const p of players){if(!auth(p))continue;const q=p.b.position;if(q.y<-8){respawn(p);continue;}for(const z of zones)if(z.test(q))p.rs.set(...z.sp[p.id]);}
+  if(mode!=='guest')for(const o of objs)if(o.b.position.y<-8){players.forEach(p=>{if(p.grab&&p.grab.b===o.b)p.grab=null;});o.b.position.set(...o.home);o.b.velocity.set(0,0,0);o.b.angularVelocity.set(0,0,0);o.b.quaternion.set(0,0,0,1);}
+  if(mode!=='guest'&&exitZ&&exitZ.on&&players.every(p=>{const q=p.b.position;return Math.abs(q.x-exitZ.x)<exitZ.w/2&&Math.abs(q.z-exitZ.z)<exitZ.d/2&&q.y>exitZ.y&&q.y<exitZ.y+2;}))win();}
 
 /* ---------- 見た目 ---------- */
 const pg=new THREE.SphereGeometry(0.06,6,4);
@@ -416,7 +420,7 @@ function drawChar(p,t,dt){const v=p.vis,q=p.b.position,vel=p.b.velocity;v.rig.po
   p.ph+=sp*dt*3.2;const mv=p.gnd?Math.min(1,sp/RUN):0;v.feet.forEach((f,k)=>{f.position.z=Math.sin(p.ph+k*Math.PI)*0.13*mv;f.position.y=-0.42+Math.max(0,Math.cos(p.ph+k*Math.PI))*0.06*mv;});
   v.eyes.forEach((e,k)=>{e.scale.y=p.tired?0.25:1;});
   const fx=Math.sin(v.yaw),fz=Math.cos(v.yaw),rx=Math.cos(v.yaw),rz=-Math.sin(v.yaw);
-  let aw=null;if(mode==='guest'){aw=p.ga||null;}else if(p.grab){const a=p.grab.b.pointToWorldFrame(p.grab.local,tv);aw=[a.x,a.y,a.z];}
+  let aw=null;if(mode==='guest'&&p.id===0){aw=p.ga||null;}else if(p.grab){const a=p.grab.b.pointToWorldFrame(p.grab.local,tv);aw=[a.x,a.y,a.z];}
   for(let k=0;k<2;k++){const s=k?1:-1,sx=q.x+rx*s*0.32,sy=q.y+0.08,sz=q.z+rz*s*0.32;
     if(aw)t1.set(aw[0]+rx*s*0.1,aw[1],aw[2]+rz*s*0.1);
     else if(p.gw)t1.set(q.x+fx*0.75+rx*s*0.18,q.y+0.55,q.z+fz*0.75+rz*s*0.18);
@@ -458,7 +462,7 @@ function hud(){for(let i=0;i<2;i++){const p=players[i],el=$('#s'+i);if(!p)contin
   if(state==='play'||mode==='guest')$('#tm').textContent=fmt(time);}
 let last=performance.now(),acc=0;
 function frame(now){const dt=Math.min(0.05,(now-last)/1000);last=now;pollPads();netTick(now,dt);
-  if(mode!=='guest'&&state==='play'){acc+=dt;let n=0;while(acc>=DT&&n<8){substep(DT);acc-=DT;n++;if(state!=='play')break;}if(n>=8||state!=='play')acc=0;}
+  const run=()=>mode==='guest'||state==='play';if(run()){acc+=dt;let n=0;while(acc>=DT&&n<8){substep(DT);acc-=DT;n++;if(!run())break;}if(n>=8||!run())acc=0;}
   visuals(dt,now/1000);updCam(dt,false);hud();renderer.render(scene,camera);requestAnimationFrame(frame);}
 addEventListener('keydown',e=>{
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Slash','Period'].includes(e.code)&&e.target.tagName!=='SELECT')e.preventDefault();
@@ -492,45 +496,65 @@ async function openNet(code,asHost){const room=await getRoom();
   return await mqttRoom(code,asHost);}
 async function getRoom(){try{return window.claude&&window.claude.use?await window.claude.use('room'):null;}catch(e){return null;}}
 const netEl=$('#net');const setNet=t=>{netEl.textContent=t;netEl.hidden=!t;};
-function snapshot(){return{v:1,L:lvIdx,st:state,t:r3(time),tt:r3(totalTime),
+function cleanS(){const o={};for(const k in S){const v=S[k];if(typeof v==='boolean'||typeof v==='number')o[k]=typeof v==='number'?r3(v):v;}return o;}
+function snapshot(){const p1=players[0];let pg=null;
+  if(p1&&p1.grab&&p1.grab.isP){const l=p1.grab.local,o=p1.grab.off;pg=[r3(l.x),r3(l.y),r3(l.z),r3(o.x),r3(o.y),r3(o.z)];}
+  return{v:2,L:lvIdx,e:epoch,st:state,t:r3(time),tt:r3(totalTime),S:cleanS(),pg,
   p:players.map(p=>{const q=p.b.position,v=p.b.velocity;let a=null;if(p.grab){const w=p.grab.b.pointToWorldFrame(p.grab.local,tv);a=[r3(w.x),r3(w.y),r3(w.z)];}
-    return[r3(q.x),r3(q.y),r3(q.z),r3(p.face.x),r3(p.face.z),r3(v.x),r3(v.z),p.gnd?1:0,Math.round(p.st),p.tired?1:0,p.gw?1:0,a];}),
-  o:objs.map(o=>{const q=o.b.position,r=o.b.quaternion;return[r3(q.x),r3(q.y),r3(q.z),r3(r.x),r3(r.y),r3(r.z),r3(r.w)];}),
+    return[r3(q.x),r3(q.y),r3(q.z),r3(p.face.x),r3(p.face.z),r3(v.x),r3(v.y),r3(v.z),p.gnd?1:0,Math.round(p.st),p.tired?1:0,p.gw?1:0,a];}),
+  o:objs.map(o=>{const q=o.b.position,r=o.b.quaternion,v=o.b.velocity;return[r3(q.x),r3(q.y),r3(q.z),r3(r.x),r3(r.y),r3(r.z),r3(r.w),r3(v.x),r3(v.y),r3(v.z)];}),
   k:kins.map(k=>{const q=k.b.position;return[r3(q.x),r3(q.y),r3(q.z)];}),
-  pl:plates.map(p=>p.on?1:0),bt:buttons.map(b=>r3(Math.max(0,b.until-time))),so:sockets.map(x=>S[x.id]?1:0),br:barriers.map(b=>b.c),
-  pw:pans?[pans.wa,pans.wb]:null,la:lasers.map(l=>r3(l.cur)),ex:exitZ&&!exitZ.on?0:1};}
+  bt:buttons.map(b=>r3(Math.max(0,b.until-time))),br:barriers.map(b=>b.c),pw:pans?[pans.wa,pans.wb]:null,ex:exitZ&&!exitZ.on?0:1};}
+let hostEpoch=-1,remotePull=null;
+function setBarrier(br,c){if(c===br.c)return;br.c=c;br.b.collisionFilterGroup=G_B[c];br.b.collisionFilterMask=G_P[1-c]|G_O;br.m.material.color.setHex(COL[c].b);br.m.material.emissive.setHex(COL[c].b);}
 function applySnap(s){if(!s||typeof s!=='object')return;const L0=Math.floor(num(s.L));if(L0<0||L0>=LEVELS.length)return;
-  if(L0!==lvIdx||!players.length)load(L0);
-  time=num(s.t);totalTime=num(s.tt);
-  if(Array.isArray(s.p))s.p.forEach((a,i)=>{const p=players[i];if(!p||!Array.isArray(a))return;p.tg=[num(a[0]),num(a[1]),num(a[2])];
-    p.face.set(num(a[3]),0,num(a[4]));if(p.face.lengthSq()<0.01)p.face.set(0,0,-1);p.face.normalize();p.b.velocity.set(num(a[5]),0,num(a[6]));
-    p.gnd=!!a[7];p.st=clamp(num(a[8]),0,100);p.tired=!!a[9];p.gw=!!a[10];p.ga=Array.isArray(a[11])?a[11].map(num):null;});
-  if(Array.isArray(s.o))s.o.forEach((a,i)=>{const o=objs[i];if(!o||!Array.isArray(a))return;o.tg=[num(a[0]),num(a[1]),num(a[2])];o.b.quaternion.set(num(a[3]),num(a[4]),num(a[5]),num(a[6])||1);});
-  if(Array.isArray(s.k))s.k.forEach((a,i)=>{const k=kins[i];if(!k||!Array.isArray(a))return;k.tg=[num(a[0]),num(a[1]),num(a[2])];});
-  if(Array.isArray(s.pl))s.pl.forEach((v,i)=>{if(plates[i])plates[i].on=!!v;});
+  if(L0!==lvIdx||s.e!==hostEpoch||!players.length){hostEpoch=s.e;load(L0);}
+  const ht=num(s.t);if(Math.abs(ht-time)>1)time=ht;else time+=(ht-time)*0.1;totalTime=num(s.tt);
+  if(s.S&&typeof s.S==='object'){for(const k in s.S){const v=s.S[k];if(/^[a-z0-9_]{1,12}$/i.test(k)&&(typeof v==='boolean'||typeof v==='number'))S[k]=v;}}
+  for(const pl of plates)pl.on=!!S[pl.id];
+  const a=Array.isArray(s.p)?s.p[0]:null,p1=players[0];
+  if(Array.isArray(a)){p1.tg=[num(a[0]),num(a[1]),num(a[2])];p1.tv=[num(a[5]),num(a[6]),num(a[7])];p1.face.set(num(a[3]),0,num(a[4]));if(p1.face.lengthSq()<0.01)p1.face.set(0,0,-1);p1.face.normalize();
+    p1.gnd=!!a[8];p1.st=clamp(num(a[9]),0,100);p1.tired=!!a[10];p1.gw=!!a[11];p1.ga=Array.isArray(a[12])?a[12].map(num):null;}
+  remotePull=Array.isArray(s.pg)?s.pg.map(num):null;
+  if(Array.isArray(s.o))s.o.forEach((a,i)=>{const o=objs[i];if(!o||!Array.isArray(a))return;o.tg=[num(a[0]),num(a[1]),num(a[2])];o.tv=[num(a[7]),num(a[8]),num(a[9])];o.b.quaternion.set(num(a[3]),num(a[4]),num(a[5]),num(a[6])||1);});
+  if(Array.isArray(s.k))s.k.forEach((a,i)=>{const k=kins[i];if(!k||!Array.isArray(a))return;const q=k.b.position;if(Math.hypot(num(a[0])-q.x,num(a[1])-q.y,num(a[2])-q.z)>0.6)q.set(num(a[0]),num(a[1]),num(a[2]));});
   if(Array.isArray(s.bt))s.bt.forEach((v,i)=>{if(buttons[i])buttons[i].until=time+num(v);});
-  if(Array.isArray(s.so))s.so.forEach((v,i)=>{if(sockets[i])S[sockets[i].id]=!!v;});
-  if(Array.isArray(s.br))s.br.forEach((v,i)=>{const br=barriers[i];const c=v?1:0;if(br&&c!==br.c){br.c=c;br.m.material.color.setHex(COL[c].b);br.m.material.emissive.setHex(COL[c].b);}});
-  if(pans&&Array.isArray(s.pw)){const a=num(s.pw[0]),b=num(s.pw[1]);if(a!==pans.wa||b!==pans.wb){pans.wa=a;pans.wb=b;panLabels();}}
-  if(Array.isArray(s.la))s.la.forEach((v,i)=>{if(lasers[i])lasers[i].cur=clamp(num(v),0,lasers[i].len);});
+  if(Array.isArray(s.br))s.br.forEach((v,i)=>{if(barriers[i])setBarrier(barriers[i],v?1:0);});
+  if(pans&&Array.isArray(s.pw)){const x=num(s.pw[0]),y=num(s.pw[1]);if(x!==pans.wa||y!==pans.wb){pans.wa=x;pans.wb=y;panLabels();}}
   if(exitZ)exitZ.on=!!s.ex;
   if(s.st==='clear'&&!guestOv){guestOv=true;showOv('脱出成功',`${L.name}　${fmt(time)}<br>お嬢様（ホスト）が次の間へ進めるのをお待ちくださいませ。`,null);}
   else if(s.st==='play'&&guestOv){guestOv=false;ov.hidden=true;}}
-function smoothGuest(dt){const k=Math.min(1,dt*16);const go=(b,t)=>{if(!t)return;const q=b.position,d=Math.hypot(t[0]-q.x,t[1]-q.y,t[2]-q.z);if(d>3)q.set(t[0],t[1],t[2]);else{q.x+=(t[0]-q.x)*k;q.y+=(t[1]-q.y)*k;q.z+=(t[2]-q.z)*k;}};
-  for(const p of players)go(p.b,p.tg);for(const o of objs)go(o.b,o.tg);for(const x of kins)go(x.b,x.tg);}
+function driveRemote(p,dt){const b=p.b,t=p.tg;if(!t)return;const v=p.tv||[0,0,0],lead=0.06;
+  const tx=t[0]+v[0]*lead,ty=t[1]+v[1]*lead,tz=t[2]+v[2]*lead,d=Math.hypot(tx-b.position.x,ty-b.position.y,tz-b.position.z);
+  if(d>2.5){b.position.set(tx,ty,tz);b.velocity.set(0,0,0);return;}
+  b.velocity.set(clamp((tx-b.position.x)*10,-12,12),clamp((ty-b.position.y)*10,-12,12),clamp((tz-b.position.z)*10,-12,12));}
+function partnerPull(dt){const p1=players[0],p2=players[1],g=remotePull;if(!g||!p1||!p2)return;
+  const aw=p2.b.pointToWorldFrame(new CANNON.Vec3(g[0],g[1],g[2]),tv),q=p1.b.position,dx=aw.x-(q.x+g[3]),dy=aw.y-(q.y+g[4]),dz=aw.z-(q.z+g[5]);
+  if(Math.hypot(dx,dy,dz)>1.5)return;const v=p2.b.velocity,ov=p1.b.velocity;let fx=dx*K+(v.x-ov.x)*C,fy=dy*K+(v.y-ov.y)*C,fz=dz*K+(v.z-ov.z)*C;
+  const fl=Math.hypot(fx,fy,fz);if(fl>55){fx*=55/fl;fy*=55/fl;fz*=55/fl;}v.x-=fx*dt;v.y-=fy*dt;v.z-=fz*dt;}
+function correctObjs(dt){const p2=players[1];for(const o of objs){if(!o.tg)continue;if(p2&&p2.grab&&p2.grab.b===o.b)continue;
+  const q=o.b.position,t=o.tg,d=Math.hypot(t[0]-q.x,t[1]-q.y,t[2]-q.z);if(d>1.5){q.set(t[0],t[1],t[2]);o.b.velocity.set(...o.tv);continue;}
+  const k=Math.min(1,dt*6);q.x+=(t[0]-q.x)*k;q.y+=(t[1]-q.y)*k;q.z+=(t[2]-q.z)*k;const v=o.b.velocity;v.x+=(o.tv[0]-v.x)*k;v.y+=(o.tv[1]-v.y)*k;v.z+=(o.tv[2]-v.z)*k;}}
 const findPeer=role=>nr?nr.peers().find(p=>!p.isMe&&p.presence&&p.presence.role===role):null;
+let lastGuestN=-1,gseq=0;
 function netTick(now,dt){if(!nr)return;
-  if(mode==='host'){const g=findPeer('guest');const a=g&&Array.isArray(g.presence.in)?g.presence.in:null;
+  if(mode==='host'){const g=findPeer('guest'),pr=g&&g.presence;const a=pr&&Array.isArray(pr.in)?pr.in:null;
     netIn=a?{x:clamp(num(a[0]),-1,1),z:clamp(num(a[1]),-1,1),jump:!!a[2],grab:!!a[3]}:null;
-    setNet(`部屋コード ${netCode}　・　相方：${g?'接続中':'未接続'}`);
-    if(now-lastSend>60){lastSend=now;nr.presence({role:'host',s:snapshot()}).catch(()=>{});}}
+    const s2=pr&&Array.isArray(pr.s2)?pr.s2:null,p2=players[1];
+    if(s2&&p2&&pr.n!==lastGuestN&&pr.e===epoch&&pr.L===lvIdx){lastGuestN=pr.n;const b=p2.b,x=num(s2[0]),y=num(s2[1]),z=num(s2[2]),d=Math.hypot(x-b.position.x,y-b.position.y,z-b.position.z);
+      if(d>1.2)b.position.set(x,y,z);else{b.position.x+=(x-b.position.x)*0.6;b.position.y+=(y-b.position.y)*0.6;b.position.z+=(z-b.position.z)*0.6;}
+      b.velocity.set(num(s2[3]),num(s2[4]),num(s2[5]));p2.face.set(num(s2[6]),0,num(s2[7]));if(p2.face.lengthSq()<0.01)p2.face.set(0,0,-1);p2.face.normalize();
+      p2.st=clamp(num(s2[8]),0,100);p2.tired=!!s2[9];}
+    setNet(`部屋コード ${netCode}　・　相方：${g?'接続中':'未接続'}　・　操作：WASD・Space・F`);
+    if(now-lastSend>50){lastSend=now;nr.presence({role:'host',s:snapshot()}).catch(()=>{});}}
   else if(mode==='guest'){const h=findPeer('host');
     if(h&&h.presence.s){hostSeen=now;applySnap(h.presence.s);}
-    smoothGuest(dt);
     const lost=hostSeen?now-hostSeen>4000:now-joinedAt>8000;
-    setNet(`部屋コード ${netCode}　・　${hostSeen&&!lost?'お嬢様（ホスト）と接続中':'ホストを探しています…'}`);
+    setNet(`部屋コード ${netCode}　・　${hostSeen&&!lost?'お嬢様（ホスト）と接続中':'ホストを探しています…'}　・　操作：WASD・Space・F`);
     if(lost&&!guestOv){guestOv=true;showOv(hostSeen?'接続が切れました':'部屋が見つかりません',hostSeen?'ホストとの接続が途切れました。ページを再読み込みして、もう一度部屋に入ってくださいませ。':'部屋コードをご確認のうえ、再読み込みしてもう一度お試しくださいませ。',null);}
-    if(now-lastSend>60){lastSend=now;const i=readKeys([0,1],0);nr.presence({role:'guest',in:[r3(i.x),r3(i.z),i.jump?1:0,i.grab?1:0]}).catch(()=>{});}}}
+    if(now-lastSend>50&&players[1]){lastSend=now;const i=readKeys([0,1],0),p2=players[1],q=p2.b.position,v=p2.b.velocity;gseq=(gseq+1)%100000;
+      nr.presence({role:'guest',n:gseq,L:lvIdx,e:hostEpoch,in:[r3(i.x),r3(i.z),i.jump?1:0,i.grab?1:0],
+        s2:[r3(q.x),r3(q.y),r3(q.z),r3(v.x),r3(v.y),r3(v.z),r3(p2.face.x),r3(p2.face.z),Math.round(p2.st),p2.tired?1:0]}).catch(()=>{});}}}
 const CODE_CH='abcdefghjkmnpqrstuvwxyz23456789';
 async function goHost(){const m=$('#netmsg');m.textContent='部屋を用意しております…';
   netCode=Array.from({length:5},()=>CODE_CH[Math.floor(Math.random()*CODE_CH.length)]).join('');
@@ -539,7 +563,7 @@ async function goHost(){const m=$('#netmsg');m.textContent='部屋を用意し�
   const link=nr.kind==='relay'?location.origin+location.pathname+'?join='+netCode:'';
   showOv('部屋をご用意しました',`部屋コード <b style="font-size:1.6em;letter-spacing:.15em;color:#e8b74a">${netCode}</b><br>`+
     (link?`このリンクを相方に送れば、開くだけで入れます。<span class="join" style="margin:10px auto;max-width:460px"><input id="lnk" readonly value="${link}"><button type="button" id="cpy">コピー</button></span>`:'相方にこのコードを伝え、「部屋に入る」で入ってもらってくださいませ。<br>')+
-    'あなたは1Pお嬢様です（WASDでも矢印キーでも動かせます）。','はじめる',start);
+    'あなたは1Pお嬢様です。オンラインでは、ふたりとも WASD で移動・Space でジャンプ・F でつかむ、の同じ操作です。','はじめる',start);
   const cp=$('#cpy');if(cp)cp.onclick=()=>{const i=$('#lnk');i.select();const ok=()=>{cp.textContent='コピーしました';};
     try{navigator.clipboard.writeText(i.value).then(ok,()=>{try{document.execCommand('copy');ok();}catch(e){}});}catch(e){try{document.execCommand('copy');ok();}catch(e2){}}};}
 async function goJoin(){const m=$('#netmsg'),code=($('#code').value||'').trim().toLowerCase();
