@@ -115,13 +115,13 @@ const cv=$('#cv'),ov=$('#ov'),sel=$('#sel');
 /* ---------- 描画の土台 ---------- */
 let renderer;
 try{renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});}catch(e){fail('この環境では3D表示（WebGL）が使えないようです。');throw e;}
-renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
-renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+let PRX=Math.min(1.5,window.devicePixelRatio||1);renderer.setPixelRatio(PRX);
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;
 renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
 const scene=new THREE.Scene();scene.background=new THREE.Color(0x15102a);scene.fog=new THREE.Fog(0x15102a,22,52);
 const camera=new THREE.PerspectiveCamera(48,16/9,0.1,200);
 scene.add(new THREE.HemisphereLight(0xb9a8ff,0x2a1d3a,0.9));
-const sun=new THREE.DirectionalLight(0xffe6bf,1.6);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
+const sun=new THREE.DirectionalLight(0xffe6bf,1.6);sun.castShadow=true;sun.shadow.mapSize.set(1536,1536);
 Object.assign(sun.shadow.camera,{left:-18,right:18,top:18,bottom:-18,near:1,far:60});sun.shadow.bias=-0.0006;scene.add(sun,sun.target);
 const resize=()=>{const r=cv.getBoundingClientRect();if(!r.width)return;renderer.setSize(r.width,r.height,false);camera.aspect=r.width/r.height;camera.updateProjectionMatrix();};
 const ro=new ResizeObserver(resize);ro.observe(cv);
@@ -318,7 +318,7 @@ function load(i){
   root.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.isSprite){o.material.map.dispose();o.material.dispose();}});
   scene.remove(root);root=new THREE.Group();scene.add(root);
   objs=[];kins=[];plates=[];buttons=[];sockets=[];lasers=[];orbs=[];zones=[];barriers=[];parts=[];weighted=[];exitZ=null;pans=null;S={};time=0;
-  world=new CANNON.World({gravity:new CANNON.Vec3(0,GRAV,0)});world.broadphase=new CANNON.SAPBroadphase(world);world.solver.iterations=14;world.defaultContactMaterial.friction=0.4;
+  world=new CANNON.World({gravity:new CANNON.Vec3(0,GRAV,0)});world.broadphase=new CANNON.SAPBroadphase(world);world.solver.iterations=12;world.defaultContactMaterial.friction=0.4;
   matW=new CANNON.Material('w');matP=new CANNON.Material('p');matO=new CANNON.Material('o');
   const cm=(a,b,f,r=0)=>world.addContactMaterial(new CANNON.ContactMaterial(a,b,{friction:f,restitution:r}));
   cm(matP,matW,0);cm(matP,matO,0.05);cm(matP,matP,0.5);cm(matO,matW,0,0);cm(matO,matO,0);
@@ -389,7 +389,7 @@ function panLabels(){for(const k of['la','lb']){if(pans[k]){root.remove(pans[k])
   const fmtW=w=>'重さ '+(Math.round(w*10)/10);pans.la=textSprite(fmtW(pans.wa),0.34,'#ffe3a0');pans.lb=textSprite(fmtW(pans.wb),0.34,'#ffe3a0');root.add(pans.la,pans.lb);}
 function respawn(p){players.forEach(o=>{if(o.grab&&(o===p||o.grab.b===p.b))o.grab=null;});const q=p.b.position;puff(q.x,q.y,q.z,COL[p.id].b,16);
   p.b.position.copy(p.rs);p.b.velocity.set(0,0,0);p.st=100;p.tired=false;}
-function substep(dt){time+=dt;if(mode!=='guest')signals();
+function substep(dt){time+=dt;netClock+=dt*1000;if(mode!=='guest')signals();
   const auth=p=>mode==='host'?p.id===0:mode==='guest'?p.id===1:true;
   for(const k of kins){const t=k.target(),b=k.b,s=k.speed;
     if(k.door&&t[1]>b.position.y+0.01){let hold=false;const bp=b.position;
@@ -397,7 +397,7 @@ function substep(dt){time+=dt;if(mode!=='guest')signals();
       if(hold){b.velocity.set(0,0,0);continue;}}
     b.velocity.set(clamp((t[0]-b.position.x)/dt,-s,s),clamp((t[1]-b.position.y)/dt,-s,s),clamp((t[2]-b.position.z)/dt,-s,s));}
   players.forEach((p,i)=>{if((mode==='guest'&&i===0)||(mode==='host'&&i===1)){driveRemote(p,dt);return;}control(p,readInput(i),dt);});
-  if(mode==='guest'){partnerPull(dt);correctObjs(dt);}else if(mode==='host')hostPull(dt);
+  if(mode==='guest'){partnerPull(dt);correctObjs(dt);}else if(mode==='host'){hostPull(dt);const tn=performance.now();for(const o of objs)if(o.ge&&o.gOwn>tn)follow(o.b,o.ge,dt,25);}
   for(const o of objs){if(!o.gnd)continue;const v=o.b.velocity,g=o.gnd.velocity,rx=v.x-g.x,rz=v.z-g.z,sp=Math.hypot(rx,rz),dv=(o.fr||3)*dt;
     if(sp<=dv){v.x=g.x;v.z=g.z;}else{v.x-=rx/sp*dv;v.z-=rz/sp*dv;}if(o.b.angularVelocity)o.b.angularVelocity.scale(1-3*dt,o.b.angularVelocity);}
   world.step(dt);
@@ -463,8 +463,10 @@ function hud(){for(let i=0;i<2;i++){const p=players[i],el=$('#s'+i);if(!p)contin
   let msg='';for(const bt of buttons){const r=bt.until-time;if(r>0)msg=`扉が開いています　${r.toFixed(1)}秒`;}$('#msg').textContent=msg;
   if(state==='play'||mode==='guest')$('#tm').textContent=fmt(time);}
 let last=performance.now(),acc=0;
+let ftAvg=16,ftN=0;
 function frame(now){const dt=Math.min(0.05,(now-last)/1000);last=now;pollPads();netTick(now,dt);
-  const run=()=>mode==='guest'||state==='play';if(run()){acc+=dt;let n=0;while(acc>=DT&&n<8){substep(DT);acc-=DT;n++;if(!run())break;}if(n>=8||!run())acc=0;}
+  ftAvg+=(dt*1000-ftAvg)*0.05;if(++ftN>120&&ftAvg>24&&PRX>1){PRX=1;renderer.setPixelRatio(1);resize();ftN=0;}
+  const run=()=>mode==='guest'||state==='play';if(run()){acc+=dt;netClock=now-acc*1000;let n=0;while(acc>=DT&&n<8){substep(DT);acc-=DT;n++;if(!run())break;}if(n>=8||!run())acc=0;}
   visuals(dt,now/1000);updCam(dt,false);hud();renderer.render(scene,camera);requestAnimationFrame(frame);}
 addEventListener('keydown',e=>{
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Slash','Period'].includes(e.code)&&e.target.tagName!=='SELECT')e.preventDefault();
@@ -492,33 +494,56 @@ async function mqttRoom(code,asHost){const M=await getMqtt();if(!M)throw new Err
   c.subscribe(base+theirs,{qos:0});
   c.on('message',(tp,buf)=>{try{const d=JSON.parse(new TextDecoder().decode(buf));if(d&&typeof d==='object'&&!Array.isArray(d)){other=d;otherAt=performance.now();}}catch(e){}});
   return{kind:'relay',presence:async p=>{if(c.connected)c.publish(base+mine,JSON.stringify(p),{qos:0});},
-    peers:()=>other&&performance.now()-otherAt<3500?[{isMe:false,presence:other}]:[],leave:async()=>{try{c.end(true);}catch(e){}}};}
-async function openNet(code,asHost){const room=await getRoom();
-  if(room){try{return await room.join('gura3d-'+code);}catch(e){throw new Error('claude.ai の部屋に入れません（'+(e&&e.code||e)+'）');}}
-  return await mqttRoom(code,asHost);}
+    peers:()=>other&&performance.now()-otherAt<3500?[{isMe:false,presence:other,at:otherAt}]:[],leave:async()=>{try{c.end(true);}catch(e){}}};}
+function roomAdapter(r){let ps=[];const seen=new Map();
+  try{r.onPeers(list=>{const now=performance.now();ps=[];(Array.isArray(list)?list:[]).forEach((p,i)=>{if(!p||p.isMe||p.you||p.me||p.self)return;
+    const pr=p.presence||p.state||p.data||null;if(!pr||typeof pr!=='object')return;const key=p.id||p.peerId||p.userId||i,old=seen.get(key);
+    let at=now;if(old&&old.n===pr.n)at=old.at;seen.set(key,{n:pr.n,at});ps.push({isMe:false,presence:pr,at});});});}catch(e){}
+  let last=0,pend=null,tm=null;const flush=()=>{tm=null;if(!pend)return;last=performance.now();const p=pend;pend=null;try{const x=r.presence(p);if(x&&x.catch)x.catch(()=>{});}catch(e){}};
+  return{kind:'room',presence:async p=>{pend=p;const w=90-(performance.now()-last);if(w<=0)flush();else if(!tm)tm=setTimeout(flush,w);},peers:()=>ps,leave:async()=>{try{r.leave();}catch(e){}}};}
+function openNet(code,asHost){const ts=[],errs=[];let done=false,pending=2;
+  const m={ts,get kind(){return ts.map(t=>t.kind).join('+');},
+    presence:async p=>{for(const t of ts){try{const x=t.presence(p);if(x&&x.catch)x.catch(()=>{});}catch(e){}}},
+    peers:()=>{const o=[];for(const t of ts){try{o.push(...t.peers());}catch(e){}}return o;},leave:async()=>{for(const t of ts)try{t.leave();}catch(e){}}};
+  return new Promise((res,rej)=>{const ok=t=>{ts.push(t);if(!done){done=true;res(m);}};
+    const fin=()=>{if(--pending===0&&!done)rej(new Error(errs.filter(Boolean).join(' / ')||'接続できません'));};
+    getRoom().then(r=>r?r.join('gura3d-'+code).then(roomAdapter):Promise.reject(new Error(''))).then(ok,e=>{errs.push(e&&e.message||'');}).finally(fin);
+    mqttRoom(code,asHost).then(ok,e=>{errs.push(e&&e.message||String(e));}).finally(fin);});}
 async function getRoom(){try{return window.claude&&window.claude.use?await window.claude.use('room'):null;}catch(e){return null;}}
 const netEl=$('#net');const setNet=t=>{netEl.textContent=t;netEl.hidden=!t;};
 function cleanS(){const o={};for(const k in S){const v=S[k];if(typeof v==='boolean'||typeof v==='number')o[k]=typeof v==='number'?r3(v):v;}return o;}
+const r2=v=>Math.round(v*100)/100;
 function snapshot(){const p1=players[0];let pg=null;
   if(p1&&p1.grab&&p1.grab.isP){const l=p1.grab.local,o=p1.grab.off;pg=[r3(l.x),r3(l.y),r3(l.z),r3(o.x),r3(o.y),r3(o.z)];}
-  return{v:2,L:lvIdx,e:epoch,st:state,t:r3(time),tt:r3(totalTime),S:cleanS(),pg,
+  return{v:3,n:Math.round(performance.now()),L:lvIdx,e:epoch,st:state,t:r3(time),tt:r3(totalTime),S:cleanS(),pg,
   p:players.map(p=>{const q=p.b.position,v=p.b.velocity;let a=null;if(p.grab){const w=p.grab.b.pointToWorldFrame(p.grab.local,tv);a=[r3(w.x),r3(w.y),r3(w.z)];}
     return[r3(q.x),r3(q.y),r3(q.z),r3(p.face.x),r3(p.face.z),r3(v.x),r3(v.y),r3(v.z),p.gnd?1:0,Math.round(p.st),p.tired?1:0,p.gw?1:0,a];}),
-  o:objs.map(o=>{const q=o.b.position,r=o.b.quaternion,v=o.b.velocity;return[r3(q.x),r3(q.y),r3(q.z),r3(r.x),r3(r.y),r3(r.z),r3(r.w),r3(v.x),r3(v.y),r3(v.z)];}),
+  o:objs.map(o=>{const q=o.b.position,r=o.b.quaternion,v=o.b.velocity,a=[r2(q.x),r2(q.y),r2(q.z),r2(v.x),r2(v.y),r2(v.z)];if(!o.b.fixedRotation)a.push(r2(r.x),r2(r.y),r2(r.z),r2(r.w));return a;}),
   k:kins.map(k=>{const q=k.b.position;return[r3(q.x),r3(q.y),r3(q.z)];}),
   bt:buttons.map(b=>r3(Math.max(0,b.until-time))),br:barriers.map(b=>b.c),pw:pans?[pans.wa,pans.wb]:null,ex:exitZ&&!exitZ.on?0:1};}
-let hostEpoch=-1,remotePull=null;
+let hostEpoch=-1,remotePull=null,netClock=0;
+const NB={iv:50,last:0};function nbNote(at){if(NB.last){const d=at-NB.last;if(d>5&&d<1000)NB.iv+=(d-NB.iv)*0.12;}NB.last=at;}
+const netDelay=()=>clamp(NB.iv*1.6+25,60,260);
+function bPush(e,at,x,y,z,vx,vy,vz){const b=e.buf||(e.buf=[]);if(b.length&&at<=b[b.length-1][0])at=b[b.length-1][0]+1;b.push([at,x,y,z,vx,vy,vz]);if(b.length>16)b.shift();}
+const _t=[0,0,0];
+function bSample(e,t,out){const b=e.buf;if(!b||!b.length)return false;
+  if(t<=b[0][0]){out[0]=b[0][1];out[1]=b[0][2];out[2]=b[0][3];return true;}
+  for(let i=b.length-1;i>0;i--){const a=b[i-1],c=b[i];if(t>=a[0]){if(t<=c[0]){const k=(t-a[0])/Math.max(1,c[0]-a[0]);out[0]=a[1]+(c[1]-a[1])*k;out[1]=a[2]+(c[2]-a[2])*k;out[2]=a[3]+(c[3]-a[3])*k;return true;}break;}}
+  const l=b[b.length-1],ex=Math.min(150,t-l[0])/1000;out[0]=l[1]+l[4]*ex;out[1]=l[2]+l[5]*ex;out[2]=l[3]+l[6]*ex;return true;}
+function follow(b,e,dt,lim){if(!bSample(e,netClock-netDelay()+dt*1000,_t))return false;const q=b.position,dx=_t[0]-q.x,dy=_t[1]-q.y,dz=_t[2]-q.z;
+  if(dx*dx+dy*dy+dz*dz>9){q.set(_t[0],_t[1],_t[2]);b.velocity.set(0,0,0);return true;}
+  b.velocity.set(clamp(dx/dt,-lim,lim),clamp(dy/dt,-lim,lim),clamp(dz/dt,-lim,lim));return true;}
 function setBarrier(br,c){if(c===br.c)return;br.c=c;br.b.collisionFilterGroup=G_B[c];br.b.collisionFilterMask=G_P[1-c]|G_O;br.m.material.color.setHex(COL[c].b);br.m.material.emissive.setHex(COL[c].b);}
-function applySnap(s){if(!s||typeof s!=='object')return;const L0=Math.floor(num(s.L));if(L0<0||L0>=LEVELS.length)return;
+function applySnap(s,at){if(!s||typeof s!=='object')return;const L0=Math.floor(num(s.L));if(L0<0||L0>=LEVELS.length)return;
   if(L0!==lvIdx||s.e!==hostEpoch||!players.length){hostEpoch=s.e;load(L0);}
   const ht=num(s.t);if(Math.abs(ht-time)>1)time=ht;else time+=(ht-time)*0.1;totalTime=num(s.tt);
   if(s.S&&typeof s.S==='object'){for(const k in s.S){const v=s.S[k];if(/^[a-z0-9_]{1,12}$/i.test(k)&&(typeof v==='boolean'||typeof v==='number'))S[k]=v;}}
   for(const pl of plates)pl.on=!!S[pl.id];
   const a=Array.isArray(s.p)?s.p[0]:null,p1=players[0];
-  if(Array.isArray(a)){p1.tgAt=performance.now();p1.tg=[num(a[0]),num(a[1]),num(a[2])];p1.tv=[num(a[5]),num(a[6]),num(a[7])];p1.face.set(num(a[3]),0,num(a[4]));if(p1.face.lengthSq()<0.01)p1.face.set(0,0,-1);p1.face.normalize();
+  if(Array.isArray(a)){nbNote(at);bPush(p1,at,num(a[0]),num(a[1]),num(a[2]),num(a[5]),num(a[6]),num(a[7]));p1.face.set(num(a[3]),0,num(a[4]));if(p1.face.lengthSq()<0.01)p1.face.set(0,0,-1);p1.face.normalize();
     p1.gnd=!!a[8];p1.st=clamp(num(a[9]),0,100);p1.tired=!!a[10];p1.gw=!!a[11];p1.ga=Array.isArray(a[12])?a[12].map(num):null;}
   remotePull=Array.isArray(s.pg)?s.pg.map(num):null;
-  if(Array.isArray(s.o))s.o.forEach((a,i)=>{const o=objs[i];if(!o||!Array.isArray(a))return;o.tg=[num(a[0]),num(a[1]),num(a[2])];o.tv=[num(a[7]),num(a[8]),num(a[9])];o.b.quaternion.set(num(a[3]),num(a[4]),num(a[5]),num(a[6])||1);});
+  if(Array.isArray(s.o))s.o.forEach((a,i)=>{const o=objs[i];if(!o||!Array.isArray(a))return;bPush(o,at,num(a[0]),num(a[1]),num(a[2]),num(a[3]),num(a[4]),num(a[5]));if(a.length>=10)o.b.quaternion.set(num(a[6]),num(a[7]),num(a[8]),num(a[9])||1);});
   if(Array.isArray(s.k))s.k.forEach((a,i)=>{const k=kins[i];if(!k||!Array.isArray(a))return;const q=k.b.position;if(Math.hypot(num(a[0])-q.x,num(a[1])-q.y,num(a[2])-q.z)>0.6)q.set(num(a[0]),num(a[1]),num(a[2]));});
   if(Array.isArray(s.bt))s.bt.forEach((v,i)=>{if(buttons[i])buttons[i].until=time+num(v);});
   if(Array.isArray(s.br))s.br.forEach((v,i)=>{if(barriers[i])setBarrier(barriers[i],v?1:0);});
@@ -526,10 +551,7 @@ function applySnap(s){if(!s||typeof s!=='object')return;const L0=Math.floor(num(
   if(exitZ)exitZ.on=!!s.ex;
   if(s.st==='clear'&&!guestOv){guestOv=true;showOv('脱出成功',`${L.name}　${fmt(time)}<br>お嬢様（ホスト）が次の間へ進めるのをお待ちくださいませ。`,null);}
   else if(s.st==='play'&&guestOv){guestOv=false;ov.hidden=true;}}
-function driveRemote(p,dt){const b=p.b,t=p.tg;if(!t)return;const v=p.tv||[0,0,0],el=Math.min(0.3,(performance.now()-(p.tgAt||0))/1000+0.05);
-  const tx=t[0]+v[0]*el,ty=t[1]+v[1]*el,tz=t[2]+v[2]*el,d=Math.hypot(tx-b.position.x,ty-b.position.y,tz-b.position.z);
-  if(d>2.5){b.position.set(tx,ty,tz);b.velocity.set(0,0,0);return;}
-  b.velocity.set(clamp(v[0]+(tx-b.position.x)*14,-14,14),clamp(v[1]+(ty-b.position.y)*14,-16,16),clamp(v[2]+(tz-b.position.z)*14,-14,14));}
+function driveRemote(p,dt){follow(p.b,p,dt,25);}
 let guestPull=null;
 function hostPull(dt){const g=guestPull,p1=players[0],p2=players[1];if(!g||!p1||!p2)return;
   const aw=p1.b.pointToWorldFrame(new CANNON.Vec3(g[0],g[1],g[2]),tv),q=p2.b.position,dx=aw.x-(q.x+g[3]),dy=aw.y-(q.y+g[4]),dz=aw.z-(q.z+g[5]);
@@ -539,44 +561,41 @@ function partnerPull(dt){const p1=players[0],p2=players[1],g=remotePull;if(!g||!
   const aw=p2.b.pointToWorldFrame(new CANNON.Vec3(g[0],g[1],g[2]),tv),q=p1.b.position,dx=aw.x-(q.x+g[3]),dy=aw.y-(q.y+g[4]),dz=aw.z-(q.z+g[5]);
   if(Math.hypot(dx,dy,dz)>1.5)return;const v=p2.b.velocity,ov=p1.b.velocity;let fx=dx*K+(v.x-ov.x)*C,fy=dy*K+(v.y-ov.y)*C,fz=dz*K+(v.z-ov.z)*C;
   const fl=Math.hypot(fx,fy,fz);if(fl>55){fx*=55/fl;fy*=55/fl;fz*=55/fl;}v.x-=fx*dt;v.y-=fy*dt;v.z-=fz*dt;}
-function correctObjs(dt){const p2=players[1];for(const o of objs){if(!o.tg)continue;if((p2&&p2.grab&&p2.grab.b===o.b)||o.own>performance.now())continue;
-  const q=o.b.position,t=o.tg,d=Math.hypot(t[0]-q.x,t[1]-q.y,t[2]-q.z);if(d>1.5){q.set(t[0],t[1],t[2]);o.b.velocity.set(...o.tv);continue;}
-  const k=Math.min(1,dt*6);q.x+=(t[0]-q.x)*k;q.y+=(t[1]-q.y)*k;q.z+=(t[2]-q.z)*k;const v=o.b.velocity;v.x+=(o.tv[0]-v.x)*k;v.y+=(o.tv[1]-v.y)*k;v.z+=(o.tv[2]-v.z)*k;}}
-const findPeer=role=>nr?nr.peers().find(p=>!p.isMe&&p.presence&&p.presence.role===role):null;
+function correctObjs(dt){const p2=players[1],tn=performance.now();for(const o of objs){if((p2&&p2.grab&&p2.grab.b===o.b)||o.own>tn)continue;follow(o.b,o,dt,25);}}
+const findPeer=role=>{if(!nr)return null;let best=null;for(const p of nr.peers()){if(p.isMe||!p.presence||p.presence.role!==role)continue;if(!best||num(p.presence.n)>num(best.presence.n))best=p;}return best;};
 let lastGuestN=-1,gseq=0,lastSnapKey='',ownI=-1;
 function netTick(now,dt){if(!nr)return;
   if(mode==='host'){const g=findPeer('guest'),pr=g&&g.presence;const a=pr&&Array.isArray(pr.in)?pr.in:null;
     netIn=a?{x:clamp(num(a[0]),-1,1),z:clamp(num(a[1]),-1,1),jump:!!a[2],grab:!!a[3]}:null;
     const s2=pr&&Array.isArray(pr.s2)?pr.s2:null,p2=players[1];
     if(s2&&p2&&pr.n!==lastGuestN&&pr.e===epoch&&pr.L===lvIdx){lastGuestN=pr.n;
-      p2.tgAt=now;p2.tg=[num(s2[0]),num(s2[1]),num(s2[2])];p2.tv=[num(s2[3]),num(s2[4]),num(s2[5])];
+      const at=g.at||now;nbNote(at);bPush(p2,at,num(s2[0]),num(s2[1]),num(s2[2]),num(s2[3]),num(s2[4]),num(s2[5]));
       p2.face.set(num(s2[6]),0,num(s2[7]));if(p2.face.lengthSq()<0.01)p2.face.set(0,0,-1);p2.face.normalize();
       p2.st=clamp(num(s2[8]),0,100);p2.tired=!!s2[9];p2.gw=!!s2[10];p2.ga=Array.isArray(s2[11])?s2[11].map(num):null;
       guestPull=Array.isArray(s2[12])?s2[12].map(num):null;p2.gnd=!!s2[13];
-      const go=Array.isArray(pr.go)?pr.go:null;if(go){const o=objs[Math.floor(num(go[0]))];if(o){const b=o.b,x=num(go[1]),y=num(go[2]),z=num(go[3]),d=Math.hypot(x-b.position.x,y-b.position.y,z-b.position.z);
-        if(d>1.5)b.position.set(x,y,z);else{b.position.x+=(x-b.position.x)*0.7;b.position.y+=(y-b.position.y)*0.7;b.position.z+=(z-b.position.z)*0.7;}
-        b.quaternion.set(num(go[4]),num(go[5]),num(go[6]),num(go[7])||1);b.velocity.set(num(go[8]),num(go[9]),num(go[10]));}}}
+      const go=Array.isArray(pr.go)?pr.go:null;if(go){const o=objs[Math.floor(num(go[0]))];if(o){o.ge=o.ge||{};bPush(o.ge,at,num(go[1]),num(go[2]),num(go[3]),num(go[8]),num(go[9]),num(go[10]));o.gOwn=now+400;
+        if(!o.b.fixedRotation)o.b.quaternion.set(num(go[4]),num(go[5]),num(go[6]),num(go[7])||1);}}}
     setNet(`部屋コード ${netCode}　・　相方：${g?'接続中':'未接続'}　・　操作：WASD・Space・F`);
-    if(now-lastSend>33){lastSend=now;nr.presence({role:'host',s:snapshot()}).catch(()=>{});}}
+    if(now-lastSend>48){lastSend=now;nr.presence({role:'host',s:snapshot()}).catch(()=>{});}}
   else if(mode==='guest'){const h=findPeer('host');
-    if(h&&h.presence.s){hostSeen=now;const hs=h.presence.s,key=hs.e+':'+hs.L+':'+hs.st+':'+hs.t;if(key!==lastSnapKey){lastSnapKey=key;applySnap(hs);}}
+    if(h&&h.presence.s){hostSeen=now;const hs=h.presence.s,key=hs.n+':'+hs.e+':'+hs.L+':'+hs.t;if(key!==lastSnapKey){lastSnapKey=key;applySnap(hs,h.at||now);}}
     const lost=hostSeen?now-hostSeen>4000:now-joinedAt>8000;
     setNet(`部屋コード ${netCode}　・　${hostSeen&&!lost?'お嬢様（ホスト）と接続中':'ホストを探しています…'}　・　操作：WASD・Space・F`);
     if(lost&&!guestOv){guestOv=true;showOv(hostSeen?'接続が切れました':'部屋が見つかりません',hostSeen?'ホストとの接続が途切れました。ページを再読み込みして、もう一度部屋に入ってくださいませ。':'部屋コードをご確認のうえ、再読み込みしてもう一度お試しくださいませ。',null);}
     const p2=players[1];
     if(p2&&p2.grab&&!p2.grab.isP){const oi=objs.findIndex(o=>o.b===p2.grab.b);if(oi>=0){objs[oi].own=now+1500;ownI=oi;}}
-    if(now-lastSend>33&&p2){lastSend=now;const q=p2.b.position,v=p2.b.velocity;gseq=(gseq+1)%100000;
+    if(now-lastSend>48&&p2){lastSend=now;const q=p2.b.position,v=p2.b.velocity;gseq=(gseq+1)%100000;
       let anc=null,pgl=null;if(p2.grab){const w=p2.grab.b.pointToWorldFrame(p2.grab.local,tv);anc=[r3(w.x),r3(w.y),r3(w.z)];
         if(p2.grab.isP){const l=p2.grab.local,o=p2.grab.off;pgl=[r3(l.x),r3(l.y),r3(l.z),r3(o.x),r3(o.y),r3(o.z)];}}
       let go=null;if(ownI>=0&&objs[ownI]&&objs[ownI].own>now){const o=objs[ownI],oq=o.b.position,r=o.b.quaternion,ov=o.b.velocity;go=[ownI,r3(oq.x),r3(oq.y),r3(oq.z),r3(r.x),r3(r.y),r3(r.z),r3(r.w),r3(ov.x),r3(ov.y),r3(ov.z)];}
-      nr.presence({role:'guest',n:gseq,L:lvIdx,e:hostEpoch,go,
+      nr.presence({role:'guest',n:Math.round(now),L:lvIdx,e:hostEpoch,go,
         s2:[r3(q.x),r3(q.y),r3(q.z),r3(v.x),r3(v.y),r3(v.z),r3(p2.face.x),r3(p2.face.z),Math.round(p2.st),p2.tired?1:0,p2.gw?1:0,anc,pgl,p2.gnd?1:0]}).catch(()=>{});}}}
 const CODE_CH='abcdefghjkmnpqrstuvwxyz23456789';
 async function goHost(){const m=$('#netmsg');m.textContent='部屋を用意しております…';
   netCode=Array.from({length:5},()=>CODE_CH[Math.floor(Math.random()*CODE_CH.length)]).join('');
   try{nr=await openNet(netCode,true);}catch(e){m.textContent='部屋を作れませんでした：'+(e&&e.message||e);return;}
   mode='host';load(0);totalTime=0;
-  const link=nr.kind==='relay'?location.origin+location.pathname+'?join='+netCode:'';
+  const link=window.top===window&&/^https?:/.test(location.protocol)?location.origin+location.pathname+'?join='+netCode:'';
   showOv('部屋をご用意しました',`部屋コード <b style="font-size:1.6em;letter-spacing:.15em;color:#e8b74a">${netCode}</b><br>`+
     (link?`このリンクを相方に送れば、開くだけで入れます。<span class="join" style="margin:10px auto;max-width:460px"><input id="lnk" readonly value="${link}"><button type="button" id="cpy">コピー</button></span>`:'相方にこのコードを伝え、「部屋に入る」で入ってもらってくださいませ。<br>')+
     'あなたは1Pお嬢様です。オンラインでは、ふたりとも WASD で移動・Space でジャンプ・F でつかむ、の同じ操作です。','はじめる',start);
