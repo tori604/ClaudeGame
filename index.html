@@ -473,17 +473,23 @@ $('#rt').addEventListener('click',()=>{load(lvIdx);start();});
 let mode='local',nr=null,netIn=null,lastSend=0,hostSeen=0,joinedAt=0,guestOv=false,netCode='';
 const r3=v=>Math.round(v*1000)/1000,num=v=>(typeof v==='number'&&isFinite(v))?v:0;
 function loadScript(src){return new Promise((res,rej)=>{const e=document.createElement('script');e.src=src;e.onload=res;e.onerror=rej;document.head.appendChild(e);});}
-async function getPeerLib(){if(window.Peer)return window.Peer;try{await loadScript('https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js');}catch(e){}return window.Peer||null;}
-function peerRoom(Peer,code,asHost){return new Promise((resolve,reject)=>{const id='gura3d-'+code;let conn=null,other=null,mine={},done=false;
-  const fin=(f,v)=>{if(!done){done=true;clearTimeout(t);f(v);}};const t=setTimeout(()=>fin(reject,new Error('timeout')),15000);
-  const api={kind:'p2p',presence:async p=>{mine=Object.assign({},mine,p);if(conn&&conn.open)try{conn.send(mine);}catch(e){}},peers:()=>other?[{isMe:false,presence:other}]:[],leave:async()=>{try{peer.destroy();}catch(e){}}};
-  const wire=c=>{conn=c;c.on('data',d=>{if(d&&typeof d==='object'&&!Array.isArray(d))other=d;});c.on('close',()=>{if(conn===c){conn=null;other=null;}});};
-  let peer;try{peer=asHost?new Peer(id):new Peer();}catch(e){fin(reject,e);return;}
-  peer.on('error',e=>fin(reject,e));
-  peer.on('open',()=>{if(asHost){peer.on('connection',c=>{if(conn&&conn.open){c.close();return;}c.on('open',()=>wire(c));});fin(resolve,api);}
-    else{const c=peer.connect(id,{reliable:true,serialization:'json'});c.on('open',()=>{wire(c);fin(resolve,api);});c.on('error',e=>fin(reject,e));}});});}
-async function openNet(code,asHost){const room=await getRoom();if(room){const r=await room.join('gura3d-'+code);return r;}
-  const P=await getPeerLib();if(!P)throw new Error('nolib');return await peerRoom(P,code,asHost);}
+async function getMqtt(){if(window.mqtt&&window.mqtt.connect)return window.mqtt;
+  for(const u of['https://unpkg.com/mqtt@5.16.1/dist/mqtt.min.js','https://cdn.jsdelivr.net/npm/mqtt@5.16.1/dist/mqtt.min.js']){try{await loadScript(u);if(window.mqtt&&window.mqtt.connect)return window.mqtt;}catch(e){}}return null;}
+const BROKERS=['wss://broker.emqx.io:8084/mqtt','wss://mqtt.eclipseprojects.io:443/mqtt','wss://test.mosquitto.org:8081'];
+function tryBroker(M,url){return new Promise((res,rej)=>{let c;try{c=M.connect(url,{clientId:'gura3d_'+Math.random().toString(36).slice(2,10),connectTimeout:6000,reconnectPeriod:2000,keepalive:30,clean:true});}catch(e){rej(e);return;}
+  const t=setTimeout(()=>{try{c.end(true);}catch(e){}rej(new Error('timeout'));},7000);
+  c.once('connect',()=>{clearTimeout(t);res(c);});c.once('error',e=>{clearTimeout(t);try{c.end(true);}catch(x){}rej(e);});});}
+async function mqttRoom(code,asHost){const M=await getMqtt();if(!M)throw new Error('通信ライブラリを読み込めません');
+  let c=null;const errs=[];for(const u of BROKERS){try{c=await tryBroker(M,u);break;}catch(e){errs.push(u.split('/')[2]+' '+String(e&&e.message||e).slice(0,40));}}
+  if(!c)throw new Error('中継サーバーにつながりません（'+errs.join(' / ')+'）');
+  const base='gura3d/v1/'+code,mine=asHost?'/h':'/g',theirs=asHost?'/g':'/h';let other=null,otherAt=0;
+  c.subscribe(base+theirs,{qos:0});
+  c.on('message',(tp,buf)=>{try{const d=JSON.parse(new TextDecoder().decode(buf));if(d&&typeof d==='object'&&!Array.isArray(d)){other=d;otherAt=performance.now();}}catch(e){}});
+  return{kind:'relay',presence:async p=>{if(c.connected)c.publish(base+mine,JSON.stringify(p),{qos:0});},
+    peers:()=>other&&performance.now()-otherAt<3500?[{isMe:false,presence:other}]:[],leave:async()=>{try{c.end(true);}catch(e){}}};}
+async function openNet(code,asHost){const room=await getRoom();
+  if(room){try{return await room.join('gura3d-'+code);}catch(e){throw new Error('claude.ai の部屋に入れません（'+(e&&e.code||e)+'）');}}
+  return await mqttRoom(code,asHost);}
 async function getRoom(){try{return window.claude&&window.claude.use?await window.claude.use('room'):null;}catch(e){return null;}}
 const netEl=$('#net');const setNet=t=>{netEl.textContent=t;netEl.hidden=!t;};
 function snapshot(){return{v:1,L:lvIdx,st:state,t:r3(time),tt:r3(totalTime),
@@ -517,20 +523,20 @@ function netTick(now,dt){if(!nr)return;
   if(mode==='host'){const g=findPeer('guest');const a=g&&Array.isArray(g.presence.in)?g.presence.in:null;
     netIn=a?{x:clamp(num(a[0]),-1,1),z:clamp(num(a[1]),-1,1),jump:!!a[2],grab:!!a[3]}:null;
     setNet(`部屋コード ${netCode}　・　相方：${g?'接続中':'未接続'}`);
-    if(now-lastSend>50){lastSend=now;nr.presence({role:'host',s:snapshot()}).catch(()=>{});}}
+    if(now-lastSend>60){lastSend=now;nr.presence({role:'host',s:snapshot()}).catch(()=>{});}}
   else if(mode==='guest'){const h=findPeer('host');
     if(h&&h.presence.s){hostSeen=now;applySnap(h.presence.s);}
     smoothGuest(dt);
     const lost=hostSeen?now-hostSeen>4000:now-joinedAt>8000;
     setNet(`部屋コード ${netCode}　・　${hostSeen&&!lost?'お嬢様（ホスト）と接続中':'ホストを探しています…'}`);
     if(lost&&!guestOv){guestOv=true;showOv(hostSeen?'接続が切れました':'部屋が見つかりません',hostSeen?'ホストとの接続が途切れました。ページを再読み込みして、もう一度部屋に入ってくださいませ。':'部屋コードをご確認のうえ、再読み込みしてもう一度お試しくださいませ。',null);}
-    if(now-lastSend>40){lastSend=now;const i=readKeys([0,1],0);nr.presence({role:'guest',in:[r3(i.x),r3(i.z),i.jump?1:0,i.grab?1:0]}).catch(()=>{});}}}
+    if(now-lastSend>60){lastSend=now;const i=readKeys([0,1],0);nr.presence({role:'guest',in:[r3(i.x),r3(i.z),i.jump?1:0,i.grab?1:0]}).catch(()=>{});}}}
 const CODE_CH='abcdefghjkmnpqrstuvwxyz23456789';
 async function goHost(){const m=$('#netmsg');m.textContent='部屋を用意しております…';
   netCode=Array.from({length:5},()=>CODE_CH[Math.floor(Math.random()*CODE_CH.length)]).join('');
-  try{nr=await openNet(netCode,true);}catch(e){m.textContent='部屋を作れませんでした。通信環境をご確認のうえ、もう一度お試しくださいませ。';return;}
+  try{nr=await openNet(netCode,true);}catch(e){m.textContent='部屋を作れませんでした：'+(e&&e.message||e);return;}
   mode='host';load(0);totalTime=0;
-  const link=nr.kind==='p2p'?location.origin+location.pathname+'?join='+netCode:'';
+  const link=nr.kind==='relay'?location.origin+location.pathname+'?join='+netCode:'';
   showOv('部屋をご用意しました',`部屋コード <b style="font-size:1.6em;letter-spacing:.15em;color:#e8b74a">${netCode}</b><br>`+
     (link?`このリンクを相方に送れば、開くだけで入れます。<span class="join" style="margin:10px auto;max-width:460px"><input id="lnk" readonly value="${link}"><button type="button" id="cpy">コピー</button></span>`:'相方にこのコードを伝え、「部屋に入る」で入ってもらってくださいませ。<br>')+
     'あなたは1Pお嬢様です（WASDでも矢印キーでも動かせます）。','はじめる',start);
@@ -539,7 +545,7 @@ async function goHost(){const m=$('#netmsg');m.textContent='部屋を用意し�
 async function goJoin(){const m=$('#netmsg'),code=($('#code').value||'').trim().toLowerCase();
   if(!/^[a-z0-9]{4,6}$/.test(code)){m.textContent='部屋コードを入力してくださいませ。';return;}
   m.textContent='部屋に入っております…';
-  try{nr=await openNet(code,false);}catch(e){m.textContent=(e&&e.type==='peer-unavailable')?'その部屋が見つかりません。コードかリンクをご確認くださいませ。':'部屋に入れませんでした。通信環境をご確認のうえ、もう一度お試しくださいませ。';return;}
+  try{nr=await openNet(code,false);}catch(e){m.textContent='部屋に入れませんでした：'+(e&&e.message||e);return;}
   netCode=code;mode='guest';state='net';joinedAt=performance.now();sel.disabled=true;$('#rt').disabled=true;ov.hidden=true;keys.clear();cv.focus();}
 function title(){showOv('ぐらぐら古城脱出 3D',`夜会の帰りに迷い込んだ古城。仕掛けだらけの六つの間を、お嬢様と執事のふたりで解き明かしましょう。
   <span class="modes"><button type="button" id="mLocal">ひとつの画面でふたり</button><button type="button" id="mHost">オンライン：部屋を作る</button>
